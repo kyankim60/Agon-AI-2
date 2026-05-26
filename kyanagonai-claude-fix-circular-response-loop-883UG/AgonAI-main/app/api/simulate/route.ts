@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAgent } from "@/lib/agents/agent-registry";
-import { XAIClient } from "@/lib/utils/xai-client";
+import { OpenAIClient } from "@/lib/utils/openai-client";
 import { SuperMemoryClient, ExaContextClient } from "@/lib/utils/memory-clients";
 import { InMemoryConversationStore, loadState } from "@/lib/utils/conversation-state";
 import { DebateSimulator } from "@/lib/debates/debate-simulator";
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     const agentNames = (body.agents ?? []) as string[];
     const topic = (body.topic ?? "") as string;
     const rounds = parseInt(String(body.rounds ?? "12"), 10) || 12;
-    const useXai = !!(body.useGemini ?? body.useXai ?? true);
+    const useOpenAI = !!(body.useGemini ?? body.useXai ?? body.useOpenAI ?? true);
     const model = (body.model as string) ?? undefined;
     const sessionId = (body.sessionId as string) ?? undefined;
     const stream = !!(body.stream ?? false);
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Topic is required" }, { status: 400, headers: corsHeaders() });
     }
 
-    const llmClient = useXai ? new XAIClient({ model }) : null;
+    const llmClient = useOpenAI ? new OpenAIClient({ model }) : null;
     const memoryClient = new SuperMemoryClient();
     const exaClient = new ExaContextClient();
 
@@ -76,19 +76,16 @@ export async function POST(request: NextRequest) {
       policy_scoring: true,
     };
 
-    // Non-streaming: return all at once (backward compatible)
     if (!stream) {
       const result = await simulator.debate(agents, topic, debateContext);
       scoreAllRounds(result, agents, topic, rounds);
       return NextResponse.json(buildPayload(result, agents, agentNames, topic, conversationState), { headers: corsHeaders() });
     }
 
-    // Streaming: send each round as it arrives using TransformStream for immediate flushing
     const encoder = new TextEncoder();
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    // Run debate in the background, writing each round as it completes
     (async () => {
       try {
         const result = await simulator.debate(agents, topic, debateContext, async (rd) => {
@@ -174,12 +171,10 @@ function buildPayload(result: any, agents: any[], agentNames: string[], topic: s
     empathyRatios: Object.fromEntries(
       agents.map((a) => [a.name, Math.round(a.empathyRatio * 1000) / 1000]),
     ),
-    // Bug 5: expose conversation-level empathy reservoir so it's trackable in the frontend
     conversationEmpathyReservoir: Math.round(conversationState.metrics.empathyReservoir * 1000) / 1000,
     oceanTraits: Object.fromEntries(agents.map((a) => [a.name, a.ocean.asDict()])),
     majorityVote: result.majorityVote,
     finalResolution: result.finalResolution,
-    // Bug 7: include judge verdict with LLM transcript analysis
     judgeVerdict: result.judgeVerdict ?? null,
   };
 }
