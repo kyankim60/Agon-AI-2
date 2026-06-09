@@ -1,4 +1,7 @@
-
+export interface GenerateOptions {
+  temperature?: number;
+  max_tokens?: number;
+}
 
 export class OpenAIClient {
   private apiKey: string;
