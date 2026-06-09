@@ -1,4 +1,4 @@
-import type { GenerateOptions } from "./xai-client";
+
 
 export class OpenAIClient {
   private apiKey: string;
