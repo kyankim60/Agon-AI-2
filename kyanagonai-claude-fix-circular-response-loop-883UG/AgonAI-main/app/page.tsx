@@ -2,10 +2,6 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const AGENT_COLORS: Record<string, string> = {
   "Adolf Hitler": "#e11d48",
   "Mahatma Gandhi": "#22c55e",
@@ -38,17 +34,23 @@ function bubbleStyle(hex: string) {
 }
 
 function initials(name: string) {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  return name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
 function roundTwo(val: number | null | undefined) {
   if (val == null) return "\u2014";
   return val.toFixed(2);
+}
+
+// ---- Download helper ----
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 interface AgentProfile {
@@ -91,10 +93,6 @@ const AGENT_PROFILES: Record<string, AgentProfile> = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
 interface ChatMsg {
   round: number;
   speaker: string;
@@ -113,7 +111,6 @@ function TypingText({ text, speed = 60, onDone }: { text: string; speed?: number
     setDisplayed("");
     const timer = setInterval(() => {
       i++;
-      // Type in word chunks for natural feel
       const nextSpace = text.indexOf(" ", i);
       const chunkEnd = nextSpace === -1 ? text.length : nextSpace + 1;
       if (i >= text.length) {
@@ -217,12 +214,7 @@ function ScoreCards({ scores }: { scores: Record<string, any> }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main Page
-// ---------------------------------------------------------------------------
-
 export default function Home() {
-  // Config state
   const [selectedAgents, setSelectedAgents] = useState<Record<string, boolean>>({
     hitler: true, gandhi: true, jinnah: true, rational: false, empathetic: false,
   });
@@ -232,7 +224,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [validationError, setValidationError] = useState("");
 
-  // Results state
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [result, setResult] = useState<any>(null);
   const [rawJson, setRawJson] = useState("");
@@ -240,7 +231,6 @@ export default function Home() {
   const [thinkingSpeaker, setThinkingSpeaker] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Experiment state
   const [expId, setExpId] = useState(1);
   const [expTopic, setExpTopic] = useState("war");
   const [expRounds, setExpRounds] = useState(15);
@@ -251,7 +241,6 @@ export default function Home() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [expResult, setExpResult] = useState<any>(null);
 
-  // Profile state
   const [activeProfile, setActiveProfile] = useState<string | null>(null);
 
   const configRef = useRef<HTMLDivElement>(null);
@@ -264,7 +253,6 @@ export default function Home() {
     setSelectedAgents((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  // ---- Run debate (streaming) ----
   const runDebate = async () => {
     const agents = Object.entries(selectedAgents)
       .filter(([, v]) => v)
@@ -322,11 +310,7 @@ export default function Home() {
               setThinkingSpeaker(event.speaker);
             } else if (event.type === "round") {
               setThinkingSpeaker("");
-              const msg: ChatMsg = {
-                round: event.round,
-                speaker: event.speaker,
-                content: event.content,
-              };
+              const msg: ChatMsg = { round: event.round, speaker: event.speaker, content: event.content };
               setStreamingMessages((prev) => [...prev, msg]);
             } else if (event.type === "complete") {
               setThinkingSpeaker("");
@@ -353,7 +337,6 @@ export default function Home() {
     }
   };
 
-  // ---- Run experiment ----
   const runExperiment = async () => {
     const histAgents = Object.entries(expAgents)
       .filter(([, v]) => v)
@@ -382,14 +365,11 @@ export default function Home() {
     }
   };
 
-  // Build speaker order for alignment (use streaming messages if available, else final result)
   const displayMessages = streamingMessages.length > 0 ? streamingMessages : (result?.chatMessages ?? []);
   const speakerOrder: string[] = [];
   for (const msg of displayMessages) {
     if (!speakerOrder.includes(msg.speaker)) speakerOrder.push(msg.speaker);
   }
-
-  // No auto-scroll — let the user read at their own pace
 
   return (
     <div className="container">
@@ -555,10 +535,7 @@ export default function Home() {
         <div className="form-row">
           <button onClick={runDebate} disabled={loading}>
             {loading ? (
-              <>
-                <span className="spinner" />
-                Running...
-              </>
+              <><span className="spinner" />Running...</>
             ) : (
               "Run Debate"
             )}
@@ -685,10 +662,7 @@ export default function Home() {
         <div className="form-row">
           <button onClick={runExperiment} disabled={expLoading}>
             {expLoading ? (
-              <>
-                <span className="spinner" />
-                Running...
-              </>
+              <><span className="spinner" />Running...</>
             ) : (
               "Run Experiment"
             )}
@@ -698,7 +672,21 @@ export default function Home() {
         {/* Experiment results */}
         {expResult && !expResult.error && (
           <div style={{ marginTop: "1rem" }}>
-            <h3>Experiment Results</h3>
+            {/* ---- DOWNLOAD BUTTON — EXPERIMENT ---- */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+              <h3 style={{ margin: 0 }}>Experiment Results</h3>
+              <button
+                className="secondary"
+                onClick={() => {
+                  const agents = expResult.experiment ?? "experiment";
+                  const topic = expResult.topic ?? "topic";
+                  downloadJson(expResult, `agonai_${agents}_${topic}_${Date.now()}.json`);
+                }}
+              >
+                Download JSON
+              </button>
+            </div>
+
             <div className="chat-stats">
               <div className="stats-row">
                 <span className="stat-chip">{expResult.experiment ?? ""}</span>
@@ -711,7 +699,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Transcript */}
             {expResult.transcript?.length > 0 && (
               <div className="chat-container">
                 {expResult.transcript.map(
@@ -738,7 +725,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* Empathy ratios */}
             {expResult.empathy_ratios && Object.keys(expResult.empathy_ratios).length > 0 && (
               <div className="exp-section">
                 <h4>Empathy Ratios</h4>
@@ -760,7 +746,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* Policy scores */}
             {expResult.policy_scores && Object.keys(expResult.policy_scores).length > 0 && (
               <div className="exp-section">
                 <h4>Policy Scores</h4>
@@ -768,7 +753,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* Judge verdict */}
             {expResult.judge_verdict && (
               <div className="judge-verdict">
                 <h4>Judge Verdict</h4>
@@ -802,11 +786,26 @@ export default function Home() {
         )}
       </section>
 
-      {/* Raw JSON */}
+      {/* Raw JSON + Download */}
       <section className="panel">
-        <h2>Raw Data</h2>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <h2 style={{ margin: 0 }}>Raw Data</h2>
+          {result && !result.error && (
+            <button
+              className="secondary"
+              onClick={() => {
+                const agents = (result.agents as string[] ?? []).join("_vs_");
+                const topic = (result.topic as string ?? "topic").replace(/\s+/g, "_");
+                downloadJson(result, `agonai_${agents}_${topic}_${Date.now()}.json`);
+              }}
+            >
+              Download JSON
+            </button>
+          )}
+        </div>
         <pre className="code">{rawJson || "Run a simulation to see results here."}</pre>
       </section>
     </div>
   );
 }
+
