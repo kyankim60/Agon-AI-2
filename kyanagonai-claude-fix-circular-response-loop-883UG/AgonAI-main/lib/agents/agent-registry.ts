@@ -6,15 +6,19 @@ import type { HistoricalAgent, LLMClient, MemoryClient } from "./base-agent";
 import { HitlerAgent } from "./hitler-agent";
 import { GandhiAgent } from "./gandhi-agent";
 import { JinnahAgent } from "./jinnah-agent";
+import { MussoliniAgent } from "./mussolini-agent";
+import { RooseveltAgent } from "./roosevelt-agent";
 import { RationalAgent, EmpatheticAgent } from "./baseline-agents";
 
-const AGENT_MAP: Record<
+const AGENT_MAP: Record
   string,
   (opts: { llmClient?: LLMClient | null; memoryClient?: MemoryClient | null }) => HistoricalAgent
 > = {
   hitler: (opts) => new HitlerAgent(opts),
   gandhi: (opts) => new GandhiAgent(opts),
   jinnah: (opts) => new JinnahAgent(opts),
+  mussolini: (opts) => new MussoliniAgent(opts),
+  roosevelt: (opts) => new RooseveltAgent(opts),
   rational: (opts) => new RationalAgent(opts),
   empathetic: (opts) => new EmpatheticAgent(opts),
 };
@@ -32,3 +36,4 @@ export function createAgent(
 }
 
 export const AVAILABLE_AGENTS = Object.keys(AGENT_MAP);
+
