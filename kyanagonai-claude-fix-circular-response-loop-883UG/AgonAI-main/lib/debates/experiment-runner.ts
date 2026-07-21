@@ -4,7 +4,7 @@
 
 import type { HistoricalAgent, LLMClient } from "../agents/base-agent";
 import { RationalAgent, EmpatheticAgent } from "../agents/baseline-agents";
-import type { JudgeVerdict } from "../agents/judge-agent";
+import { JudgeAgent, type JudgeVerdict } from "../agents/judge-agent";
 import { DebateSimulator, type DebateResult } from "./debate-simulator";
 import { REGION_WEIGHTS, type RegionWeights } from "../scoring/policy-scoring";
 
@@ -62,7 +62,6 @@ export function experimentResultAsDict(r: ExperimentResult): Record<string, unkn
 export async function runExperiment(config: ExperimentConfig): Promise<ExperimentResult> {
   const start = Date.now();
 
-  // Empathy injection
   if (config.empathyInjection) {
     for (const agent of config.agents) {
       if (agent.name in config.empathyInjection) {
@@ -84,12 +83,37 @@ export async function runExperiment(config: ExperimentConfig): Promise<Experimen
     policy_scoring: true,
   });
 
-  // Rounds are scored inside the simulator (LLM judge when available,
-  // content heuristic otherwise), so the verdict reflects the transcript.
-  const judgeVerdict: JudgeVerdict | null = config.useJudge
-    ? debateResult.judgeVerdict ?? null
-    : null;
-  const convergenceRound = judgeVerdict?.convergence_round ?? null;
+  for (let roundNum = 0; roundNum < debateResult.rounds.length; roundNum++) {
+    const rd = debateResult.rounds[roundNum];
+    const speaker = config.agents.find((a) => a.name === rd.speaker);
+    if (speaker) {
+      let opponentObj = 0;
+      for (const other of config.agents) {
+        if (other.name !== speaker.name && other.scorecard.objectiveValues.length) {
+          opponentObj = other.scorecard.objectiveValues[other.scorecard.objectiveValues.length - 1];
+        }
+      }
+      speaker.scoreRound({
+        topic: config.topic,
+        roundNumber: roundNum + 1,
+        maxRounds: config.maxRounds ?? 15,
+        opponentObjective: opponentObj,
+      });
+    }
+  }
+
+  let judgeVerdict: JudgeVerdict | null = null;
+  let convergenceRound: number | null = null;
+  if (config.useJudge) {
+    const judge = new JudgeAgent(config.regionWeights);
+    const roundsData = debateResult.rounds.map((rd) => ({
+      speaker: rd.speaker,
+      response: rd.response,
+      round: rd.roundNumber,
+    }));
+    judgeVerdict = await judge.evaluate(config.agents, roundsData, config.topic);
+    convergenceRound = judgeVerdict?.convergence_round ?? null;
+  }
 
   const scorecards: Record<string, Record<string, unknown>> = {};
   for (const a of config.agents) scorecards[a.name] = a.scorecard.asDict();
@@ -120,7 +144,10 @@ export function getExperimentConfigs(opts?: {
   configs.push({
     name: "1_rational_vs_rational",
     description: "Two purely rational agents negotiate to maximize their own points",
-    agents: [new RationalAgent({ name: "Rational-A", llmClient }), new RationalAgent({ name: "Rational-B", llmClient })],
+    agents: [
+      new RationalAgent({ name: "Rational-A", llmClient }),
+      new RationalAgent({ name: "Rational-B", llmClient }),
+    ],
     topic,
     maxRounds,
     useJudge: true,
@@ -209,3 +236,4 @@ export function getExperimentConfigs(opts?: {
 
   return configs;
 }
+
