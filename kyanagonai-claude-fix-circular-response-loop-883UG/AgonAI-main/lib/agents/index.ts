@@ -9,6 +9,9 @@ export type {
 export { HitlerAgent } from "./hitler-agent";
 export { GandhiAgent } from "./gandhi-agent";
 export { JinnahAgent } from "./jinnah-agent";
+export { MussoliniAgent } from "./mussolini-agent";
+export { RooseveltAgent } from "./roosevelt-agent";
 export { RationalAgent, EmpatheticAgent } from "./baseline-agents";
 export { JudgeAgent } from "./judge-agent";
 export type { JudgeVerdict } from "./judge-agent";
+
