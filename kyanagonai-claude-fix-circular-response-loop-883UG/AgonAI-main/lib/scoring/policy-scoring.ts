@@ -1,144 +1,220 @@
 /**
- * Policy scoring system for multi-dimensional benefit-cost analysis.
- *
- * Each proposal/position is scored across three policy dimensions:
- *   - Political  (benefit 0-100, cost 0-100)
- *   - Economic   (benefit 0-100, cost 0-100)
- *   - Social     (benefit 0-100, cost 0-100)
+ * Policy scoring system for AgonAI debate agents.
  */
 
-function clamp100(v: number): number {
-  return Math.max(0, Math.min(100, v));
-}
-
-// ---------------------------------------------------------------------------
-// Data structures
-// ---------------------------------------------------------------------------
-
-export interface PolicyDimensionData {
+export interface PolicyDimension {
   benefit: number;
   cost: number;
   net: number;
 }
 
-export class PolicyDimension {
-  benefit: number;
-  cost: number;
-
-  constructor(benefit = 50, cost = 50) {
-    this.benefit = clamp100(benefit);
-    this.cost = clamp100(cost);
-  }
-
-  get net(): number {
-    return this.benefit - this.cost;
-  }
-}
-
-export class PolicyScores {
+export interface PolicyScores {
   political: PolicyDimension;
   economic: PolicyDimension;
   social: PolicyDimension;
-
-  constructor(
-    political?: PolicyDimension,
-    economic?: PolicyDimension,
-    social?: PolicyDimension,
-  ) {
-    this.political = political ?? new PolicyDimension();
-    this.economic = economic ?? new PolicyDimension();
-    this.social = social ?? new PolicyDimension();
-  }
-
-  get totalBenefit(): number {
-    return this.political.benefit + this.economic.benefit + this.social.benefit;
-  }
-
-  get totalCost(): number {
-    return this.political.cost + this.economic.cost + this.social.cost;
-  }
-
-  get totalNet(): number {
-    return this.totalBenefit - this.totalCost;
-  }
-
-  asDict(): Record<string, unknown> {
-    return {
-      political: { benefit: this.political.benefit, cost: this.political.cost, net: this.political.net },
-      economic: { benefit: this.economic.benefit, cost: this.economic.cost, net: this.economic.net },
-      social: { benefit: this.social.benefit, cost: this.social.cost, net: this.social.net },
-      total_benefit: this.totalBenefit,
-      total_cost: this.totalCost,
-      total_net: this.totalNet,
-    };
-  }
 }
 
-export class RegionWeights {
+export interface RegionWeights {
   political: number;
   economic: number;
   social: number;
-
-  constructor(political = 0.33, economic = 0.34, social = 0.33) {
-    const total = political + economic + social;
-    if (total > 0) {
-      this.political = political / total;
-      this.economic = economic / total;
-      this.social = social / total;
-    } else {
-      this.political = political;
-      this.economic = economic;
-      this.social = social;
-    }
-  }
 }
 
 export const REGION_WEIGHTS: Record<string, RegionWeights> = {
-  default: new RegionWeights(0.33, 0.34, 0.33),
-  authoritarian: new RegionWeights(0.50, 0.30, 0.20),
-  democratic: new RegionWeights(0.25, 0.30, 0.45),
-  developing: new RegionWeights(0.20, 0.50, 0.30),
-  conflict_zone: new RegionWeights(0.45, 0.25, 0.30),
+  default:       { political: 0.34, economic: 0.33, social: 0.33 },
+  authoritarian: { political: 0.50, economic: 0.30, social: 0.20 },
+  democratic:    { political: 0.25, economic: 0.30, social: 0.45 },
+  conflict_zone: { political: 0.45, economic: 0.35, social: 0.20 },
+  economic_hub:  { political: 0.20, economic: 0.55, social: 0.25 },
 };
 
-export class AgentScorecard {
-  agentName: string;
-  roundsPlayed = 0;
-  cumulativeScores: PolicyScores = new PolicyScores();
-  roundScores: PolicyScores[] = [];
-  roundRationales: string[] = [];
-  objectiveValues: number[] = [];
-  fatigue = 0;
-  empathyBonus = 0;
-  penalties = 0;
+// ── Ideology benefit/cost seeds ───────────────────────────────────────────────
+const IDEOLOGY_POLICY: Record<string, PolicyScores> = {
+  fascism: {
+    political: { benefit: 75, cost: 30, net: 45 },
+    economic:  { benefit: 55, cost: 40, net: 15 },
+    social:    { benefit: 30, cost: 65, net: -35 },
+  },
+  communism: {
+    political: { benefit: 65, cost: 35, net: 30 },
+    economic:  { benefit: 50, cost: 50, net: 0  },
+    social:    { benefit: 55, cost: 30, net: 25 },
+  },
+  democracy: {
+    political: { benefit: 60, cost: 25, net: 35 },
+    economic:  { benefit: 60, cost: 30, net: 30 },
+    social:    { benefit: 65, cost: 20, net: 45 },
+  },
+  nonviolence: {
+    political: { benefit: 40, cost: 20, net: 20 },
+    economic:  { benefit: 45, cost: 25, net: 20 },
+    social:    { benefit: 80, cost: 10, net: 70 },
+  },
+  muslim_nationalism: {
+    political: { benefit: 65, cost: 30, net: 35 },
+    economic:  { benefit: 50, cost: 35, net: 15 },
+    social:    { benefit: 60, cost: 25, net: 35 },
+  },
+  authoritarianism: {
+    political: { benefit: 80, cost: 20, net: 60 },
+    economic:  { benefit: 50, cost: 40, net: 10 },
+    social:    { benefit: 20, cost: 70, net: -50 },
+  },
+  liberalism: {
+    political: { benefit: 55, cost: 25, net: 30 },
+    economic:  { benefit: 65, cost: 25, net: 40 },
+    social:    { benefit: 70, cost: 15, net: 55 },
+  },
+  conservatism: {
+    political: { benefit: 60, cost: 25, net: 35 },
+    economic:  { benefit: 60, cost: 30, net: 30 },
+    social:    { benefit: 50, cost: 30, net: 20 },
+  },
+  capitalism: {
+    political: { benefit: 55, cost: 25, net: 30 },
+    economic:  { benefit: 75, cost: 20, net: 55 },
+    social:    { benefit: 50, cost: 35, net: 15 },
+  },
+};
 
-  constructor(agentName: string) {
-    this.agentName = agentName;
-  }
+// ── Topic modifiers — shift scores based on debate topic ─────────────────────
+const TOPIC_MODIFIERS: Record<string, Partial<Record<string, Partial<PolicyScores>>>> = {
+  war: {
+    fascism:        { political: { benefit: 85, cost: 20, net: 65 }, economic: { benefit: 40, cost: 60, net: -20 }, social: { benefit: 20, cost: 80, net: -60 } },
+    democracy:      { political: { benefit: 65, cost: 30, net: 35 }, economic: { benefit: 50, cost: 50, net: 0  }, social: { benefit: 55, cost: 35, net: 20 } },
+    nonviolence:    { political: { benefit: 25, cost: 10, net: 15 }, economic: { benefit: 40, cost: 20, net: 20 }, social: { benefit: 90, cost: 5,  net: 85 } },
+    authoritarianism:{ political: { benefit: 85, cost: 15, net: 70 }, economic: { benefit: 40, cost: 55, net: -15 }, social: { benefit: 15, cost: 75, net: -60 } },
+  },
+  territorial_disputes: {
+    fascism:        { political: { benefit: 90, cost: 15, net: 75 }, economic: { benefit: 60, cost: 30, net: 30 }, social: { benefit: 25, cost: 60, net: -35 } },
+    muslim_nationalism: { political: { benefit: 80, cost: 20, net: 60 }, economic: { benefit: 55, cost: 30, net: 25 }, social: { benefit: 65, cost: 20, net: 45 } },
+    nonviolence:    { political: { benefit: 35, cost: 15, net: 20 }, economic: { benefit: 40, cost: 20, net: 20 }, social: { benefit: 85, cost: 10, net: 75 } },
+    democracy:      { political: { benefit: 55, cost: 25, net: 30 }, economic: { benefit: 55, cost: 30, net: 25 }, social: { benefit: 60, cost: 20, net: 40 } },
+  },
+  economic_policy: {
+    capitalism:     { political: { benefit: 55, cost: 20, net: 35 }, economic: { benefit: 85, cost: 15, net: 70 }, social: { benefit: 45, cost: 40, net: 5  } },
+    communism:      { political: { benefit: 60, cost: 35, net: 25 }, economic: { benefit: 55, cost: 45, net: 10 }, social: { benefit: 65, cost: 25, net: 40 } },
+    democracy:      { political: { benefit: 60, cost: 20, net: 40 }, economic: { benefit: 65, cost: 25, net: 40 }, social: { benefit: 65, cost: 20, net: 45 } },
+    fascism:        { political: { benefit: 70, cost: 25, net: 45 }, economic: { benefit: 60, cost: 35, net: 25 }, social: { benefit: 25, cost: 60, net: -35 } },
+  },
+  immigration: {
+    fascism:        { political: { benefit: 80, cost: 20, net: 60 }, economic: { benefit: 45, cost: 40, net: 5  }, social: { benefit: 15, cost: 80, net: -65 } },
+    democracy:      { political: { benefit: 55, cost: 30, net: 25 }, economic: { benefit: 65, cost: 25, net: 40 }, social: { benefit: 65, cost: 25, net: 40 } },
+    liberalism:     { political: { benefit: 50, cost: 25, net: 25 }, economic: { benefit: 70, cost: 20, net: 50 }, social: { benefit: 75, cost: 15, net: 60 } },
+    conservatism:   { political: { benefit: 65, cost: 25, net: 40 }, economic: { benefit: 50, cost: 35, net: 15 }, social: { benefit: 45, cost: 40, net: 5  } },
+  },
+  socialism: {
+    communism:      { political: { benefit: 70, cost: 30, net: 40 }, economic: { benefit: 60, cost: 40, net: 20 }, social: { benefit: 70, cost: 20, net: 50 } },
+    capitalism:     { political: { benefit: 50, cost: 30, net: 20 }, economic: { benefit: 70, cost: 30, net: 40 }, social: { benefit: 40, cost: 45, net: -5 } },
+    democracy:      { political: { benefit: 55, cost: 25, net: 30 }, economic: { benefit: 60, cost: 30, net: 30 }, social: { benefit: 65, cost: 20, net: 45 } },
+    fascism:        { political: { benefit: 65, cost: 30, net: 35 }, economic: { benefit: 50, cost: 45, net: 5  }, social: { benefit: 20, cost: 70, net: -50 } },
+  },
+  wartime_state_power: {
+    fascism:        { political: { benefit: 90, cost: 10, net: 80 }, economic: { benefit: 55, cost: 45, net: 10 }, social: { benefit: 20, cost: 75, net: -55 } },
+    democracy:      { political: { benefit: 65, cost: 30, net: 35 }, economic: { benefit: 60, cost: 40, net: 20 }, social: { benefit: 65, cost: 25, net: 40 } },
+    authoritarianism:{ political: { benefit: 88, cost: 12, net: 76 }, economic: { benefit: 50, cost: 50, net: 0  }, social: { benefit: 15, cost: 80, net: -65 } },
+    liberalism:     { political: { benefit: 50, cost: 30, net: 20 }, economic: { benefit: 60, cost: 35, net: 25 }, social: { benefit: 70, cost: 20, net: 50 } },
+  },
+  race_relations: {
+    fascism:        { political: { benefit: 60, cost: 40, net: 20 }, economic: { benefit: 40, cost: 45, net: -5 }, social: { benefit: 10, cost: 90, net: -80 } },
+    nonviolence:    { political: { benefit: 45, cost: 15, net: 30 }, economic: { benefit: 40, cost: 20, net: 20 }, social: { benefit: 90, cost: 5,  net: 85 } },
+    democracy:      { political: { benefit: 55, cost: 25, net: 30 }, economic: { benefit: 55, cost: 25, net: 30 }, social: { benefit: 75, cost: 15, net: 60 } },
+    authoritarianism:{ political: { benefit: 65, cost: 30, net: 35 }, economic: { benefit: 40, cost: 40, net: 0  }, social: { benefit: 10, cost: 85, net: -75 } },
+  },
+};
 
-  get finalObjective(): number {
-    if (!this.objectiveValues.length) return 0;
-    return this.objectiveValues.reduce((a, b) => a + b, 0);
-  }
-
-  asDict(): Record<string, unknown> {
-    return {
-      agent_name: this.agentName,
-      rounds_played: this.roundsPlayed,
-      cumulative_scores: this.cumulativeScores.asDict(),
-      final_objective: Math.round(this.finalObjective * 100) / 100,
-      fatigue: Math.round(this.fatigue * 10000) / 10000,
-      empathy_bonus: Math.round(this.empathyBonus * 100) / 100,
-      penalties: Math.round(this.penalties * 100) / 100,
-      round_history: this.roundScores.map((s) => s.asDict()),
-      round_rationales: this.roundRationales,
-    };
-  }
+function mergeDimension(
+  base: PolicyDimension,
+  override?: Partial<PolicyDimension>,
+): PolicyDimension {
+  if (!override) return { ...base };
+  const benefit = override.benefit ?? base.benefit;
+  const cost    = override.cost    ?? base.cost;
+  return { benefit, cost, net: benefit - cost };
 }
 
-// ---------------------------------------------------------------------------
-// OCEAN personality traits
-// ---------------------------------------------------------------------------
+export function scoreProposal(
+  topic: string,
+  ideology: string,
+  personalityModifier: number,
+  cooperativeness: number,
+): PolicyScores {
+  const base = IDEOLOGY_POLICY[ideology] ?? IDEOLOGY_POLICY.democracy;
+
+  // Normalize topic key
+  const topicKey = topic.toLowerCase().replace(/[\s-]+/g, "_");
+  const topicMod = TOPIC_MODIFIERS[topicKey]?.[ideology];
+
+  const political = mergeDimension(base.political, topicMod?.political);
+  const economic  = mergeDimension(base.economic,  topicMod?.economic);
+  const social    = mergeDimension(base.social,    topicMod?.social);
+
+  // Apply personality modifier — scales benefits up/down by personality
+  const pm = Math.max(0.5, Math.min(1.5, 1 + personalityModifier * 0.3));
+  // Cooperative agents get a social bonus
+  const cooperationBonus = cooperativeness * 5;
+
+  return {
+    political: {
+      benefit: Math.min(100, political.benefit * pm),
+      cost:    political.cost,
+      net:     Math.min(100, political.benefit * pm) - political.cost,
+    },
+    economic: {
+      benefit: Math.min(100, economic.benefit * pm),
+      cost:    economic.cost,
+      net:     Math.min(100, economic.benefit * pm) - economic.cost,
+    },
+    social: {
+      benefit: Math.min(100, social.benefit * pm + cooperationBonus),
+      cost:    social.cost,
+      net:     Math.min(100, social.benefit * pm + cooperationBonus) - social.cost,
+    },
+  };
+}
+
+export function computeObjective(
+  scores: PolicyScores,
+  weights: RegionWeights,
+  fatigue: number,
+  penalty: number,
+): number {
+  const raw =
+    scores.political.net * weights.political +
+    scores.economic.net  * weights.economic  +
+    scores.social.net    * weights.social;
+
+  const fatigued = raw * (1 - fatigue * 0.1);
+  return Math.max(-100, fatigued - penalty);
+}
+
+export function applyEmpathyMultiplier(
+  ownObjective: number,
+  opponentObjective: number,
+  empathyRatio: number,
+): number {
+  if (empathyRatio <= 0) return ownObjective;
+  return ownObjective * (1 - empathyRatio) + opponentObjective * empathyRatio;
+}
+
+export function applyFatiguePenalty(
+  currentFatigue: number,
+  roundNumber: number,
+  emotionalStability: number,
+  maxRounds: number,
+): number {
+  const roundFraction = roundNumber / Math.max(maxRounds, 1);
+  const fatigueDelta = roundFraction * (1 - emotionalStability) * 0.15;
+  return Math.min(1, currentFatigue + fatigueDelta);
+}
+
+export function computePenalty(
+  violatedRedLines: number,
+  lowCooperationRounds: number,
+  repeatedPositions: number,
+): number {
+  return violatedRedLines * 15 + lowCooperationRounds * 3 + repeatedPositions * 5;
+}
 
 export class OCEANTraits {
   openness: number;
@@ -148,172 +224,95 @@ export class OCEANTraits {
   neuroticism: number;
 
   constructor(
-    openness = 0.5,
-    conscientiousness = 0.5,
-    extraversion = 0.5,
-    agreeableness = 0.5,
-    neuroticism = 0.5,
+    openness: number,
+    conscientiousness: number,
+    extraversion: number,
+    agreeableness: number,
+    neuroticism: number,
   ) {
-    this.openness = openness;
-    this.conscientiousness = conscientiousness;
-    this.extraversion = extraversion;
-    this.agreeableness = agreeableness;
-    this.neuroticism = neuroticism;
+    this.openness          = Math.max(0, Math.min(1, openness));
+    this.conscientiousness = Math.max(0, Math.min(1, conscientiousness));
+    this.extraversion      = Math.max(0, Math.min(1, extraversion));
+    this.agreeableness     = Math.max(0, Math.min(1, agreeableness));
+    this.neuroticism       = Math.max(0, Math.min(1, neuroticism));
   }
 
   empathyScore(): number {
-    const score =
-      this.agreeableness * 0.45 +
-      this.openness * 0.25 +
-      this.extraversion * 0.15 +
-      (1.0 - this.neuroticism) * 0.10 +
-      this.conscientiousness * 0.05;
-    return Math.max(0, Math.min(1, score));
+    return (this.agreeableness * 0.5 + this.openness * 0.3 + (1 - this.neuroticism) * 0.2);
   }
 
   personalityModifier(): number {
     return (
-      (this.agreeableness - 0.5) * 0.6 +
-      (this.openness - 0.5) * 0.3 +
-      (this.conscientiousness - 0.5) * 0.15 -
-      (this.neuroticism - 0.5) * 0.15
-    );
+      this.openness          * 0.25 +
+      this.conscientiousness * 0.20 +
+      this.extraversion      * 0.20 +
+      this.agreeableness     * 0.20 +
+      (1 - this.neuroticism) * 0.15
+    ) - 0.5;
   }
 
   asDict(): Record<string, number> {
     return {
-      openness: Math.round(this.openness * 100) / 100,
-      conscientiousness: Math.round(this.conscientiousness * 100) / 100,
-      extraversion: Math.round(this.extraversion * 100) / 100,
-      agreeableness: Math.round(this.agreeableness * 100) / 100,
-      neuroticism: Math.round(this.neuroticism * 100) / 100,
-      empathy_score: Math.round(this.empathyScore() * 1000) / 1000,
+      openness:          Math.round(this.openness          * 1000) / 1000,
+      conscientiousness: Math.round(this.conscientiousness * 1000) / 1000,
+      extraversion:      Math.round(this.extraversion      * 1000) / 1000,
+      agreeableness:     Math.round(this.agreeableness     * 1000) / 1000,
+      neuroticism:       Math.round(this.neuroticism        * 1000) / 1000,
     };
   }
 }
 
-// ---------------------------------------------------------------------------
-// Content-based round scoring (heuristic fallback when no LLM judge)
-// ---------------------------------------------------------------------------
+export class AgentScorecard {
+  agentName: string;
+  roundsPlayed = 0;
+  roundScores: PolicyScores[] = [];
+  objectiveValues: number[] = [];
+  fatigue = 0;
+  penalties = 0;
+  empathyBonus = 0;
+  cumulativeScores: PolicyScores = {
+    political: { benefit: 0, cost: 0, net: 0 },
+    economic:  { benefit: 0, cost: 0, net: 0 },
+    social:    { benefit: 0, cost: 0, net: 0 },
+  };
 
-const COOPERATION_MARKERS = [
-  "agree", "common ground", "compromise", "concede", "concession", "you're right",
-  "you are right", "fair point", "understand your", "willing to", "together",
-  "mutual", "shared", "accept your", "acknowledge",
-];
-
-const AGGRESSION_MARKERS = [
-  "never", "refuse", "demand", "destroy", "crush", "enemy", "weakness",
-  "surrender", "unacceptable", "threat", "force", "war", "annihilat",
-];
-
-const PROPOSAL_MARKERS = [
-  "propose", "suggest", "offer", "plan", "framework", "solution", "let us",
-  "we could", "we should", "how about", "what if", "alternative",
-];
-
-const EVIDENCE_MARKERS = [
-  "because", "history shows", "for example", "evidence", "consider", "in fact",
-  "as we saw", "experience", "demonstrat", "proven", "record shows",
-];
-
-function countMarkers(text: string, markers: string[]): number {
-  let n = 0;
-  for (const m of markers) if (text.includes(m)) n++;
-  return n;
-}
-
-/**
- * Score a single debate response from its actual content. Every signal is
- * derived from the text itself — relevance to the topic, substance, evidence,
- * engagement, concrete proposals, cooperation vs aggression. No ideology or
- * identity of the speaker is consulted, so the same words score the same
- * regardless of who says them.
- */
-export function scoreResponseContent(
-  topic: string,
-  responseText: string,
-  cooperationLevel = 0.5,
-): PolicyScores {
-  const text = responseText.toLowerCase();
-  const words = text.split(/\W+/).filter(Boolean);
-
-  // Substance: enough said to constitute an argument (saturates ~50 words)
-  const substance = Math.min(words.length / 50, 1);
-
-  // Relevance: overlap between meaningful topic words and the response
-  const topicWords = topic.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-  let relevance = 0.5;
-  if (topicWords.length) {
-    const hits = topicWords.filter((w) => text.includes(w)).length;
-    relevance = hits / topicWords.length;
+  constructor(agentName: string) {
+    this.agentName = agentName;
   }
 
-  const coop = Math.min(countMarkers(text, COOPERATION_MARKERS), 4);
-  const aggression = Math.min(countMarkers(text, AGGRESSION_MARKERS), 4);
-  const proposals = Math.min(countMarkers(text, PROPOSAL_MARKERS), 4);
-  const evidence = Math.min(countMarkers(text, EVIDENCE_MARKERS), 4);
-  const engagesOpponent = /\byou\b|\byour\b/.test(text) ? 1 : 0;
+  get finalObjective(): number {
+    if (!this.objectiveValues.length) return 0;
+    return this.objectiveValues[this.objectiveValues.length - 1];
+  }
 
-  const quality = substance * (0.4 + 0.6 * relevance); // 0..1
-
-  const political = new PolicyDimension(
-    35 + quality * 30 + evidence * 4 + proposals * 3 + engagesOpponent * 4,
-    55 - quality * 15 - coop * 3 + aggression * 4 - cooperationLevel * 10,
-  );
-  const economic = new PolicyDimension(
-    35 + quality * 30 + proposals * 5 + evidence * 3,
-    55 - quality * 15 - proposals * 3 + aggression * 3 - cooperationLevel * 10,
-  );
-  const social = new PolicyDimension(
-    35 + quality * 25 + coop * 6 + engagesOpponent * 4,
-    55 - quality * 10 - coop * 5 + aggression * 6 - cooperationLevel * 10,
-  );
-
-  return new PolicyScores(political, economic, social);
+  asDict(): Record<string, unknown> {
+    return {
+      agent:            this.agentName,
+      rounds_played:    this.roundsPlayed,
+      final_objective:  Math.round(this.finalObjective * 100) / 100,
+      fatigue:          Math.round(this.fatigue        * 1000) / 1000,
+      penalties:        Math.round(this.penalties      * 100)  / 100,
+      empathy_bonus:    Math.round(this.empathyBonus   * 100)  / 100,
+      cumulative_scores: {
+        political: {
+          benefit: Math.round(this.cumulativeScores.political.benefit * 100) / 100,
+          cost:    Math.round(this.cumulativeScores.political.cost    * 100) / 100,
+          net:     Math.round(this.cumulativeScores.political.net     * 100) / 100,
+        },
+        economic: {
+          benefit: Math.round(this.cumulativeScores.economic.benefit  * 100) / 100,
+          cost:    Math.round(this.cumulativeScores.economic.cost     * 100) / 100,
+          net:     Math.round(this.cumulativeScores.economic.net      * 100) / 100,
+        },
+        social: {
+          benefit: Math.round(this.cumulativeScores.social.benefit    * 100) / 100,
+          cost:    Math.round(this.cumulativeScores.social.cost       * 100) / 100,
+          net:     Math.round(this.cumulativeScores.social.net        * 100) / 100,
+        },
+      },
+      objective_history: this.objectiveValues.map((v) => Math.round(v * 100) / 100),
+    };
+  }
 }
 
-export function computeObjective(
-  scores: PolicyScores,
-  weights?: RegionWeights,
-  fatigue = 0,
-  penalty = 0,
-): number {
-  const w = weights ?? REGION_WEIGHTS.default;
-  const raw =
-    w.political * scores.political.net +
-    w.economic * scores.economic.net +
-    w.social * scores.social.net;
-  return raw * (1.0 - Math.min(fatigue, 0.95)) - penalty;
-}
 
-export function applyEmpathyMultiplier(
-  ownObjective: number,
-  opponentObjective: number,
-  empathyRatio: number,
-): number {
-  const er = Math.max(0, Math.min(1, empathyRatio));
-  return ownObjective * (1.0 - er) + opponentObjective * er;
-}
-
-export function applyFatiguePenalty(
-  baseFatigue: number,
-  roundNumber: number,
-  emotionalStability = 0.5,
-  maxRounds = 20,
-): number {
-  const progress = roundNumber / Math.max(maxRounds, 1);
-  const stabilityFactor = 1.0 - emotionalStability * 0.6;
-  const fatigue =
-    baseFatigue +
-    (1.0 / (1.0 + Math.exp(-8 * (progress - 0.6)))) * stabilityFactor * 0.4;
-  return Math.min(fatigue, 0.95);
-}
-
-export function computePenalty(
-  violatedRedLines = 0,
-  lowCooperationRounds = 0,
-  repeatedPositions = 0,
-): number {
-  return violatedRedLines * 15.0 + lowCooperationRounds * 5.0 + repeatedPositions * 3.0;
-}
