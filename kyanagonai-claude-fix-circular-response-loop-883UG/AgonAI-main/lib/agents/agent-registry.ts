@@ -1,7 +1,3 @@
-/**
- * Agent creation registry — maps string keys to agent constructors.
- */
-
 import type { HistoricalAgent, LLMClient, MemoryClient } from "./base-agent";
 import { HitlerAgent } from "./hitler-agent";
 import { GandhiAgent } from "./gandhi-agent";
@@ -10,10 +6,7 @@ import { MussoliniAgent } from "./mussolini-agent";
 import { RooseveltAgent } from "./roosevelt-agent";
 import { RationalAgent, EmpatheticAgent } from "./baseline-agents";
 
-const AGENT_MAP: Record
-  string,
-  (opts: { llmClient?: LLMClient | null; memoryClient?: MemoryClient | null }) => HistoricalAgent
-> = {
+const AGENT_MAP: Record<string, (opts: { llmClient?: LLMClient | null; memoryClient?: MemoryClient | null }) => HistoricalAgent> = {
   hitler: (opts) => new HitlerAgent(opts),
   gandhi: (opts) => new GandhiAgent(opts),
   jinnah: (opts) => new JinnahAgent(opts),
