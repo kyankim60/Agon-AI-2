@@ -396,7 +396,7 @@ export abstract class HistoricalAgent {
     maxRounds?: number;
     opponentObjective?: number;
     violatedRedLines?: number;
-    lonCooperationRounds?: number;
+    lowCooperationRounds?: number;
     repeatedPositions?: number;
   }): number {
     const maxRounds = opts.maxRounds ?? 20;
@@ -422,7 +422,7 @@ export abstract class HistoricalAgent {
 
     const penalty = computePenalty(
       opts.violatedRedLines ?? 0,
-      opts.lonCooperationRounds ?? 0,
+      opts.lowCooperationRounds ?? 0,
       opts.repeatedPositions ?? 0,
     );
 
@@ -490,12 +490,7 @@ export abstract class HistoricalAgent {
     const willingness = this.willingnessToCompromise();
     const blended = ideological * 0.5 + willingness * 0.5;
 
-    let accept: boolean;
-    if (violatedRedLine) {
-      accept = false;
-    } else {
-      accept = blended >= 0.45;
-    }
+    const accept = violatedRedLine ? false : blended >= 0.45;
 
     if (this.llmClient) {
       const system = [
