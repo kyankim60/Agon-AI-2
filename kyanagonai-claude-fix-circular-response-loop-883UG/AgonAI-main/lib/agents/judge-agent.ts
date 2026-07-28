@@ -12,6 +12,16 @@ export interface TranscriptAnalysis {
   key_turning_point: string;
 }
 
+export interface JudgeRoundScore {
+  speaker: string;
+  rationale: string;
+  scores: {
+    political: number;
+    economic: number;
+    social: number;
+  };
+}
+
 export interface JudgeVerdict {
   winner: string | null;
   margin: number;
@@ -22,6 +32,7 @@ export interface JudgeVerdict {
   policy_breakdown: Record<string, Record<string, unknown>>;
   recommendations: string[];
   transcript_analysis?: TranscriptAnalysis;
+  scoring_method?: string;
 }
 
 export class JudgeAgent {
@@ -31,6 +42,61 @@ export class JudgeAgent {
   constructor(regionWeights?: RegionWeights, llmClient?: LLMClient | null) {
     this.regionWeights = regionWeights ?? REGION_WEIGHTS.default;
     this.llmClient = llmClient ?? null;
+  }
+
+  async scoreRounds(
+    topic: string,
+    rounds: { speaker: string; response: string }[],
+  ): Promise<(JudgeRoundScore | null)[]> {
+    if (!this.llmClient) return rounds.map(() => null);
+
+    return Promise.all(
+      rounds.map(async (rd) => {
+        try {
+          const system = [
+            "You are an impartial debate judge.",
+            "Score this response based ONLY on argument quality, not ideology.",
+            "Respond ONLY with a valid JSON object, no markdown, no explanation.",
+          ].join("\n");
+
+          const prompt = [
+            `Topic: ${topic}`,
+            `Speaker: ${rd.speaker}`,
+            `Response: "${rd.response.slice(0, 500)}"`,
+            "",
+            "Score the argument quality 0-100 for:",
+            "- political: how effectively does it advance a political position?",
+            "- economic: how sound is the economic reasoning?",
+            "- social: how persuasive is it to a general audience?",
+            "",
+            'Reply ONLY: {"political": 0-100, "economic": 0-100, "social": 0-100, "rationale": "one sentence"}',
+          ].join("\n");
+
+          const raw = await this.llmClient.generate(prompt, system, {
+            temperature: 0.3,
+            max_tokens: 150,
+          });
+
+          if (!raw?.trim()) return null;
+          const cleaned = raw.replace(/```(?:json)?\s*/g, "").replace(/```\s*/g, "");
+          const match = cleaned.match(/\{[\s\S]*\}/);
+          if (!match) return null;
+          const parsed = JSON.parse(match[0]);
+
+          return {
+            speaker: rd.speaker,
+            rationale: parsed.rationale ?? "",
+            scores: {
+              political: Math.max(0, Math.min(100, parsed.political ?? 50)),
+              economic:  Math.max(0, Math.min(100, parsed.economic  ?? 50)),
+              social:    Math.max(0, Math.min(100, parsed.social    ?? 50)),
+            },
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
   }
 
   private async analyzeTranscript(
@@ -111,11 +177,11 @@ export class JudgeAgent {
     const empathyAnalysis: Record<string, Record<string, unknown>> = {};
     for (const a of agents) {
       empathyAnalysis[a.name] = {
-        empathy_ratio: Math.round(a.empathyRatio * 1000) / 1000,
-        empathy_bonus: Math.round(a.scorecard.empathyBonus * 100) / 100,
-        ocean: a.ocean.asDict(),
-        fatigue_final: Math.round(a.fatigue * 10000) / 10000,
-        penalties: Math.round(a.scorecard.penalties * 100) / 100,
+        empathy_ratio:  Math.round(a.empathyRatio * 1000) / 1000,
+        empathy_bonus:  Math.round(a.scorecard.empathyBonus * 100) / 100,
+        ocean:          a.ocean.asDict(),
+        fatigue_final:  Math.round(a.fatigue * 10000) / 10000,
+        penalties:      Math.round(a.scorecard.penalties * 100) / 100,
       };
     }
 
@@ -123,7 +189,10 @@ export class JudgeAgent {
     let convergenceMetric = 0;
     if (agents.length === 2) {
       const [a1, a2] = agents;
-      const len = Math.min(a1.scorecard.objectiveValues.length, a2.scorecard.objectiveValues.length);
+      const len = Math.min(
+        a1.scorecard.objectiveValues.length,
+        a2.scorecard.objectiveValues.length,
+      );
       for (let i = 0; i < len; i++) {
         const v1 = a1.scorecard.objectiveValues[i];
         const v2 = a2.scorecard.objectiveValues[i];
@@ -153,26 +222,25 @@ export class JudgeAgent {
       const cs = a.scorecard.cumulativeScores;
       policyBreakdown[a.name] = {
         political: { benefit: Math.round(cs.political.benefit * 10) / 10, cost: Math.round(cs.political.cost * 10) / 10, net: Math.round(cs.political.net * 10) / 10 },
-        economic: { benefit: Math.round(cs.economic.benefit * 10) / 10, cost: Math.round(cs.economic.cost * 10) / 10, net: Math.round(cs.economic.net * 10) / 10 },
-        social: { benefit: Math.round(cs.social.benefit * 10) / 10, cost: Math.round(cs.social.cost * 10) / 10, net: Math.round(cs.social.net * 10) / 10 },
+        economic:  { benefit: Math.round(cs.economic.benefit  * 10) / 10, cost: Math.round(cs.economic.cost  * 10) / 10, net: Math.round(cs.economic.net  * 10) / 10 },
+        social:    { benefit: Math.round(cs.social.benefit    * 10) / 10, cost: Math.round(cs.social.cost    * 10) / 10, net: Math.round(cs.social.net    * 10) / 10 },
       };
     }
 
     const recommendations = this.generateRecommendations(agents, convergenceRound, topic);
 
-    // Bug 7: LLM-based transcript analysis
     const transcriptAnalysis = transcript
       ? await this.analyzeTranscript(transcript, agents.map((a) => a.name))
       : undefined;
 
     return {
       winner,
-      margin: Math.round(margin * 100) / 100,
+      margin:             Math.round(margin * 100) / 100,
       scorecards,
-      empathy_analysis: empathyAnalysis,
-      convergence_round: convergenceRound,
+      empathy_analysis:   empathyAnalysis,
+      convergence_round:  convergenceRound,
       convergence_metric: Math.round(convergenceMetric * 1000) / 1000,
-      policy_breakdown: policyBreakdown,
+      policy_breakdown:   policyBreakdown,
       recommendations,
       transcript_analysis: transcriptAnalysis,
     };
@@ -186,45 +254,34 @@ export class JudgeAgent {
     const recs: string[] = [];
 
     const highEmpathy = agents.filter((a) => a.empathyRatio > 0.4);
-    const lowEmpathy = agents.filter((a) => a.empathyRatio <= 0.4);
+    const lowEmpathy  = agents.filter((a) => a.empathyRatio <= 0.4);
 
     if (highEmpathy.length && lowEmpathy.length) {
-      const heAvg =
-        highEmpathy.reduce((s, a) => s + a.scorecard.finalObjective, 0) / highEmpathy.length;
-      const leAvg =
-        lowEmpathy.reduce((s, a) => s + a.scorecard.finalObjective, 0) / lowEmpathy.length;
+      const heAvg = highEmpathy.reduce((s, a) => s + a.scorecard.finalObjective, 0) / highEmpathy.length;
+      const leAvg = lowEmpathy.reduce((s, a) => s + a.scorecard.finalObjective, 0)  / lowEmpathy.length;
       if (heAvg > leAvg) {
-        recs.push(
-          `Higher empathy agents averaged ${heAvg.toFixed(1)} vs ${leAvg.toFixed(1)} — empathy correlated with better outcomes on '${topic}'.`,
-        );
+        recs.push(`Higher empathy agents averaged ${heAvg.toFixed(1)} vs ${leAvg.toFixed(1)} — empathy correlated with better outcomes on '${topic}'.`);
       } else {
-        recs.push(
-          `Lower empathy agents performed better (${leAvg.toFixed(1)} vs ${heAvg.toFixed(1)}) — pure rationality may be more effective on '${topic}'.`,
-        );
+        recs.push(`Lower empathy agents performed better (${leAvg.toFixed(1)} vs ${heAvg.toFixed(1)}) — pure rationality may be more effective on '${topic}'.`);
       }
     }
 
     if (convergenceRound) {
-      recs.push(
-        `Agents converged at round ${convergenceRound}. Earlier convergence suggests productive dialogue.`,
-      );
+      recs.push(`Agents converged at round ${convergenceRound}. Earlier convergence suggests productive dialogue.`);
     } else {
       recs.push("No convergence detected. Consider increasing empathy or adjusting topic framing.");
     }
 
     for (const a of agents) {
       if (a.fatigue > 0.5) {
-        recs.push(
-          `${a.name} showed high fatigue (${a.fatigue.toFixed(2)}). Consider shorter debates or higher emotional stability.`,
-        );
+        recs.push(`${a.name} showed high fatigue (${a.fatigue.toFixed(2)}). Consider shorter debates or higher emotional stability.`);
       }
       if (a.scorecard.penalties > 20) {
-        recs.push(
-          `${a.name} accumulated ${a.scorecard.penalties.toFixed(0)} penalty points. Review red-line violations and cooperation.`,
-        );
+        recs.push(`${a.name} accumulated ${a.scorecard.penalties.toFixed(0)} penalty points. Review red-line violations and cooperation.`);
       }
     }
 
     return recs;
   }
 }
+
